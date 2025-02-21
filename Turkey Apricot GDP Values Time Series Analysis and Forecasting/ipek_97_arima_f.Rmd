@@ -1,0 +1,963 @@
+---
+title: "Final Apricot Report"
+author: "Ipek Sarihan"
+date: "2025-01-03"
+output: html_document
+---
+
+```{r,echo=FALSE}
+library(zoo)
+library(xts)
+library(dplyr)
+library(tidyverse)
+library(ggplot2)
+library(gridExtra)
+library(rugarch)
+library(forcats)
+library(tseries)
+library(MTS)
+library(anomalize)
+library(stats)
+library(tibbletime)
+library(tidyverse)
+library(timetk)
+
+
+```
+
+**Time series plot and interpretation**
+
+```{r}
+library(readr)
+FAOSTAT_data_apricot <- read_csv("C:/Users/ipeks/Downloads/FAOSTAT_data_apricot.csv")
+apricot <- FAOSTAT_data_apricot[,c("Year","Value")]
+head(apricot)
+
+apricot_index <- as.yearmon(apricot$Year)
+apricot_xts <- as.xts(apricot[, -1], order.by = apricot_index)
+
+autoplot(apricot_xts,color="darkorange") +
+  scale_x_yearmon(format = "%Y") +
+  labs(title = "Apricot Time Series", x = "Year", y = "Gross Production Value")+
+  theme(legend.position = "none")
+
+```
+
+```{r}
+apricot_ts_new <- ts(apricot[,2], start=c(1961), frequency = 1)
+```
+
+```{r}
+#Cross Validation
+#Train data
+apricot_train <- window(apricot_ts_new, end=c(time(apricot_ts_new)[length(apricot_ts_new) - 4]))
+#Test data
+apricot_test <- window(apricot_ts_new, start = c(time(apricot_ts_new)[length(apricot_ts_new) - 4 + 1]))
+apricot_test
+```
+
+```{r}
+apricot_ts <- apricot%>%
+  as_tibble() %>%
+  mutate(Year = as.Date(paste0(Year, "-01-01"))) %>%
+  as_tbl_time(index = Year)
+```
+
+We can realize there is a definite increasing trend, so our series is not stationary. Time series perfom a pattern with some rising and falling trends over time. There is a significant variablity.
+
+```{r}
+class(apricot_ts)
+frequency(apricot) # we have annual dataset
+```
+
+Checking for Outliers, since they can distort statistical tests for stationarity and seasonality
+
+```{r}
+boxplot(apricot$Value, 
+        main = "Boxplot of Apricot GP Values", 
+        ylab = "Values", 
+        col = "goldenrod1", 
+        outline = TRUE)
+
+outliers <- boxplot.stats(apricot$Value)$out
+print(outliers)  # no outliers
+```
+
+There seems no outliers in this dataset, as there are no data points plotted outside the whiskers The distribution seems fairly symmetrical, as the median is roughly centered in the box
+
+Imlpying Tests to be sure about stationary
+
+We test Augmented Dickey-Fuller Test for mean 0 
+
+H0: process is not stationary 
+H1: process is stationary
+
+```{r}
+adf.test(apricot$Value) 
+
+```
+
+Our series is not stationary
+
+```{r}
+library(forecast)
+spec.pgram(apricot_ts, main = "Periodogram of Yearly Data")
+
+```
+
+In the provided plot, there is no clear or significant peak in the periodogram, therefore we can conclude that no dominant seasonal or periodic pattern is evident in this data, The time series likely does not have seasonality.
+
+To sum up, we can conlude that we have a non-stationary data with increasing trend, and we don't observe any seasonal or periodic pattern. If present, may be very weak or associated with longer-term cycles.  
+
+
+
+
+Reserving the last 4 years of data as the test set for yearly data. Splitting data into training and test sets as train and test data
+
+
+
+
+
+**Box-Cox Transformation Analysis**
+
+Firstly, we will conduct Anomaly detection, if necessary we will check for Box-Cox transformation.
+
+
+```{r}
+library(tibbletime)
+library(timetk)
+library(anomalize)
+library(stats)
+
+```
+
+```{r}
+apricot_ts <- apricot%>%
+  as_tibble() %>%
+  mutate(Year = as.Date(paste0(Year, "-01-01"))) %>%
+  as_tbl_time(index = Year)
+
+```
+
+
+
+#apricot_tst <- apricot_train%>%                                    ##train datanın ismi
+#  as_tibble() %>%
+#  mutate(Year = as.Date(paste0(Year, "-01-01"))) %>%
+#  as_tbl_time(index = Year)
+
+
+
+
+#apricot_ts1 <- ts(apricot$Value, start = c(1961),frequency = 1) 
+
+
+
+
+```{r}
+apricot_ts %>% anomalize::time_decompose(Value, method = "stl", frequency = "auto", trend = "auto") %>% anomalize::anomalize(remainder, method = "gesd", alpha = 0.05, max_anoms = 0.2) %>% anomalize::plot_anomaly_decomposition()
+
+
+```
+
+Since trend is a large factor we prefer 'stl' method to 'twitter' method as we don't have strong seasonality
+The observed anomalies that are representing as red points indicate that where the data deviates significantly from the expected patterns 
+   
+
+```{r}
+apricot_ts %>% 
+  anomalize::time_decompose(Value) %>%
+  anomalize::anomalize(remainder) %>%
+  anomalize::time_recompose() %>%
+  anomalize::plot_anomalies(time_recomposed = TRUE, ncol = 3, alpha_dots = 0.5)
+```
+
+The anomalies occur around the years approximately 2005 and 2010, For the researches we can discover that between 1995 and 2010, Türkiye's agricultural sector experienced shifts, including changes in land use and production quantities. Also there is another research that conducted between 2006 and 2008 in Hatay, Turkey, demonstrated significant differences in fruit set percentages among various apricot cultivars, with some cultivars exhibiting as low as 2.3% fruit set. These events may have caused anomalies.
+
+Extracting Anomaly Points
+
+```{r}
+apricot_ts %>% 
+  anomalize::time_decompose(Value) %>%
+  anomalize::anomalize(remainder) %>%
+  anomalize::time_recompose() %>%
+  filter(anomaly == 'Yes')
+```
+
+Adjusting Alpha and Max Anoms
+
+```{r}
+apricot_ts %>% 
+  anomalize::time_decompose(Value) %>%
+  anomalize::anomalize(remainder,alpha=0.05) %>%
+  anomalize::time_recompose() %>%
+  anomalize::plot_anomalies(time_recomposed = TRUE, ncol = 3, alpha_dots = 0.5)
+
+apricot_ts %>% 
+  anomalize::time_decompose(Value) %>%
+  anomalize::anomalize(remainder,alpha=0.1) %>%
+  anomalize::time_recompose() %>%
+  anomalize::plot_anomalies(time_recomposed = TRUE, ncol = 3, alpha_dots = 0.5)
+
+```
+
+This strict threshold as alpha =0.05 is reasonable for detecting major, impactful anomalies. The flagged points seem plausible as significant deviations
+
+For furher less impactfull anomalies, we conduct with alpha value as 0.1
+
+Deciding max_anoms as 0.05
+
+```{r}
+apricot_ts %>% 
+  anomalize::time_decompose(Value) %>%
+  anomalize::anomalize(remainder,alpha=0.1,max_anoms = 0.05) %>%
+  anomalize::time_recompose() %>%
+  anomalize::plot_anomalies(time_recomposed = TRUE, ncol = 3, alpha_dots = 0.5)
+
+```
+
+Cleaning Anomalies and The Plot of Cleaned Data
+
+```{r}
+apricot_train_clean <- tsclean(apricot_train)  ##Cleaned trained data
+```
+
+Checking for normality of data to decide on whether we require BoxCox transformation or not.
+
+
+Skewness 
+
+Data seems right-skewed
+```{r}
+ggplot(apricot_ts, aes(x = Value)) +
+  geom_density(fill = "tomato", color = "black") +
+  theme_minimal()
+
+```
+
+Checking for normality and implying Shapiro-Wilk test that is 
+
+H0: The data is normally distributed.
+H1: The data is not normally distributed.
+
+```{r}
+shapiro.test(apricot_train_clean)
+
+```
+our p value has a very small value than alpha value as 0.05, we reject the Null Hypothesis. Our data is not normally distributed and it is skewed, therefore we need to conduct Box-Cox transformation.
+
+
+```{r}
+lambda <- BoxCox.lambda(apricot_train_clean)
+lambda
+
+apricot_tt <- BoxCox(apricot_train_clean, lambda)  #apricot trained and transformed data
+```
+
+
+```{r}
+#apricot_test_ts <- ts(apricot_test$Value, start = min(apricot_test$Year), frequency = 1)
+
+#apricot_train_ts <- ts(apricot_tst$Value, start = min(apricot_train$Year), frequency = 1)
+#apricot_traints <- as.ts(apricot_tst, start = 1961, frequency = 1) #same code 
+
+#class(apricot_train_ts)
+
+```
+
+since our lambda value as 0.177 is not so close to 1, therefore transformation might improve the normality or linearity of the data
+
+plotting transformed and trained data
+
+
+```{r}
+plot.ts(apricot_tt, main = "Box-Cox Transformed Time Series", ylab = "Transformed Value", col = "blue")
+```
+After Box-Cox variances become better. 
+
+```{r}
+shapiro.test(apricot_tt)
+
+
+```
+After transformation data is normal since it has higher p-value than alpha value as 0.05.
+
+**Step 5**
+
+Checking for ACF, PACF plots, KPSS and ADF or PP test results for zero mean
+
+```{r}
+p1 <- ggAcf(apricot_tt,main="ACF Plot")
+p2 <- ggPacf(apricot_tt, main = "PACF Plot")
+grid.arrange(p1,p2,nrow=1)
+```
+
+There exists slow linear decay in ACF, our process is not stationary. We need to apply differencing.
+
+KPSS Test
+
+H0: process is stationary
+H1: process is not stationary
+
+p-val is 0.01 for alpha value 0.05, reject H0, so the process is not stationary
+
+```{r}
+library(tseries)
+kpss.test(apricot_tt,null="Level")
+```
+H0: process has stochastic trend
+H1: process has deterministic trend
+
+p-val is 0.1 for alpha value 0.05, fail to reject H0 that has stochastic trend
+
+```{r}
+kpss.test(apricot_tt,null="Trend")
+```
+
+We test Augmented Dickey-Fuller Test for mean 0
+
+H0: process is not stationary
+H1: process is stationary
+
+```{r}
+
+adf.test(apricot_tt) 
+
+```
+
+p-val is 0.021 for alpha value 0.05, we reject H0 that is process is not stationary
+
+Deciding on how many regular differencing required
+
+```{r}
+ndiffs(apricot_tt)
+```
+We require 1 regular differencing as we have 1 regular unit root
+There is no seasonality, no need to perform HEGY test
+
+**STEP 6 Removing Trend**
+
+We have 1 regular unit root
+
+KPSS Test
+
+H0: process is stationary
+H1: process is not stationary
+
+p-val is 0.1 for alpha value 0.05, fail to reject H0 that is process is stationary
+
+```{r}
+kpss.test(diff(apricot_tt), null = "Level") 
+
+```
+
+```{r}
+kpss.test(diff(apricot_tt),null="Trend")
+```
+p-val is 0.1 for alpha value 0.05, fail to reject H0 that is we have stochastic trend
+
+
+ADF Test
+
+H0: process is not stationary
+H1: process is stationary 
+
+p-val is 0.01 for alpha value 0.05 reject H0 process is stationary
+
+```{r}
+adf.test(diff(apricot_tt))  
+
+```
+With this p-value our series is stationary after one-differencing
+
+
+
+**Step 7**
+
+
+```{r}
+eacf(apricot_tt)
+```
+
+
+
+
+
+
+
+```{r}
+p1 <- ggAcf(diff(apricot_tt),main="ACF Plot")
+p2 <- ggPacf(diff(apricot_tt), main = "PACF Plot")
+grid.arrange(p1,p2,nrow=1)
+
+```
+
+**Step 8**
+
+Identifying a proper model based on our ACF and PACF plots 
+
+ARIMA(2,1,0) ACF model shows slight exponential decay that can lead us to think AR(2) model
+ARIMA(2,1,1) Since there exists a slight not clear expo decay, we can consider the significant spike at lag 1 in ACF plot
+ARIMA(1,1,1)
+ARIMA(1,1,0)
+
+checking for suggested model
+
+```{r}
+
+arima_model <- auto.arima(apricot_tt, seasonal = FALSE)
+arima_model
+
+```
+We can check for ARIMA(2,1,0)
+
+**Step 9**
+
+Comparing informational criteria to decide best model, fitting ARIMA models
+
+```{r}
+fit1 <- Arima(apricot_tt, order = c(2, 1, 0))  #for ARIMA(2,1,0)
+
+fit2 <- Arima(apricot_tt, order = c(2,1,1))  #for ARIMA(2,1,1)
+
+fit3 <- Arima(apricot_tt, order = c(1, 1, 1))  #for ARIMA(1,1,1)
+
+fit4 <- Arima(apricot_tt, order = c(1, 1, 0))  #for ARIMA(1,1,0)
+
+```
+
+
+
+```{r}
+summary(fit1)
+summary(fit2)
+summary(fit3)
+summary(fit4)
+
+```
+
+
+
+Interpretation :
+
+fit1 is significant with AIC: 1557
+
+fit2:
+AR2: not significant with AIC: 1559
+MA1: is not significant
+
+fit3:
+AR1: not significant with AIC:1557
+MA1: significant
+
+fit4: 
+AR1: significant with AIC:1559
+
+ 
+We can choose Model1 is best model that is ARIMA(2,1,0) with significance and smallest AIC value
+
+**Step10**
+
+```{r}
+model_comparison <- data.frame(
+  Model = c("ARIMA(2,1,0)", "ARIMA(2,1,1)", "ARIMA(1,1,1)", "ARIMA(1,1,0)"),
+  AIC = c(AIC(fit1), AIC(fit2), AIC(fit3), AIC(fit4)),
+  BIC = c(BIC(fit1), BIC(fit2), BIC(fit3), BIC(fit4)),
+  MLE = c(logLik(fit1),logLik(fit2),logLik(fit3),logLik(fit4))
+)
+
+print(model_comparison)
+
+```
+
+
+**Step11**
+
+Diagnostic Checking
+
+Checking residuals diagnostic plots 
+
+```{r}
+checkresiduals(fit1)
+```
+The residuals appear to fluctuate around zero, which is a good sign
+The spread of the residuals seems relatively consistent over time, indicating that the residuals likely have a constant variance
+The residuals appear to fluctuate randomly without any obvious patterns or trends.
+No significant spikes that are out of the WN borders, no autocorrelation in residuals.
+
+However, to confirm the adequacy of the model, we require more diagnostic checks 
+
+Residuals vs Time Plot
+
+```{r}
+plot(residuals(fit1),type="l", main = "Standardized Residuals vs Time", ylab = "Standardized Residuals")
+```
+
+
+Test for normality
+
+```{r}
+shapiro.test(residuals(fit1))
+```
+p-value is higher than alpha value as 0.05, we fail to reject the Null Hypothesis. Our residuals are normal.
+
+We have some outliers, we smooth to get better results 
+
+```{r}
+r=resid(fit1)
+```
+
+
+```{r}
+ggplot(r, aes(sample = r)) +stat_qq()+geom_qq_line()+ggtitle("QQ Plot of the Residuals")+theme_minimal()
+```
+
+
+
+
+
+Test for autocorrelation
+
+H0 (for the Box-Ljung test): is that the residuals are uncorrelated (they exhibit white noise behavior).
+
+The p-value 0.55 is greater than significance level as 0.05
+This means we fail to reject, the residuals show no significant autocorrelation
+
+
+```{r}
+Box.test(residuals(fit1), lag = 10, type = "Ljung-Box")
+
+```
+
+H0 (for the Breusch-Godfrey test ): is that there is no serial correlation in the residuals (residuals are uncorrelated).
+
+The p-value 0.79 is higher than the significance level 0.05
+
+This means we fail to reject H0
+There is no significant evidence of autocorrelation in the residuals.
+
+
+```{r}
+library(lmtest)
+bgtest(residuals(fit1) ~ fitted(fit1), order = 20)
+
+```
+H0:The residuals are normally distributed
+H1:The residuals are not normally distributed
+
+p-value (0.61) is higher than the alpha value as 0.05, we fail to reject the null hypothesis. Residuals are normally distributed.
+
+Jarque Bera test
+
+```{r}
+library(tseries)
+jarque.bera.test(residuals(fit1))
+
+```
+Since the p-value (0.95) is higher than the significance level of 0.05
+reject the null hypothesis. This indicates that the residuals of model does follow a normal distribution.
+
+With all these tests we prove the existence of normality among residuals of the model.
+
+```{r}
+r2 <- r*r
+p1 <- ggAcf(r2,main="ACF Plot")
+p2 <- ggPacf(r2, main = "PACF Plot")
+grid.arrange(p1,p2,nrow=1)
+
+```
+
+
+There seems no significant spike, all lags are in WN bands. However one of the lag is very close to the boundries, lets check it via formal tests.
+
+
+```{r}
+library(lmtest)
+library(TSA)
+m = lm(r ~ apricot_tt+zlag(apricot_tt)+zlag(apricot_tt,2))
+bptest(m)
+
+```
+The p-value is much larger than 0.05 meaning we fail to reject the null hypothesis.
+This suggests that there is no evidence of heteroscedasticity
+
+As we have p-value as 0.9, we don't have heteroscedasticity problem.
+
+
+ARCH Engle’s Test for Residual Heteroscedasticity
+
+```{r}
+library(FinTS)
+ArchTest(r2)
+
+```
+The results of this test also suggest that there is no heteroscedasticity problem. So, we conclude that homoscedasticity assumption is satisfied
+
+........
+
+At the end of diagnostic checks, we can make conclusions on;
+We satisfied assumptions of no correlation and no heteroscedasticity problem,we could satisfied the assumption of normality based on Shapiro Wilk's test and Jargue Bera Test.
+
+
+**Step 11 Forecasting**
+
+
+```{r}
+
+f<-forecast(fit1,h=4)
+
+```
+
+
+```{r}
+autoplot(f)+theme_minimal()+autolayer(fitted(f), series="Fitted")+ggtitle("Forecast of ARIMA")
+```
+The forecast shows a continuation of the upward trend in the series, which aligns well with the se.
+However, PI seems wide, then we need to check the performance of the model, but it is our forecast.
+
+Since we have implied transformation, we need to conduct back transformation
+
+```{r}
+f_inv_t<-InvBoxCox(f$mean,lambda)
+accuracy(f_inv_t,apricot_test)
+
+```
+Our MAPE value is not greater than 10% but we can say that it is close, however it is still below the common treshold 10%, suggesting that the forecast is reasonably accurate 
+
+
+```{r}
+autoplot(f_inv_t,main=c("Time Series Plot of Actual Values and ARIMA Forecast"), series="forecast" ) + autolayer(apricot_test,series = "actual")
+```
+
+
+**Deciding on Proper ETS Model**
+
+```{r}
+ets_t <- ets(apricot_train_clean, model = "ZZZ")
+summary(ets_t)
+ets_t
+```
+alpha value with 0.198 which represents a slowly updated and errors related to past
+
+**Checking the Assumptions**
+
+```{r}
+r_ets <- resid(ets_t)
+ggplot(r_ets, aes(sample = r_ets)) +stat_qq()+geom_qq_line()+ggtitle("QQ Plot of the Residuals")+theme_minimal()
+
+```
+
+The residuals seems normally distributed as they follow the straight line, However there is a minor slight deviations can be observable at the tails which might need further investigation
+
+Implying one of the normality tests
+```{r}
+shapiro.test(r_ets)
+```
+ETS model residuals are normally distributed.
+
+
+Autocorrelation
+
+```{r}
+g111<-ggAcf(as.vector(r_ets), lag.max = 104)+theme_minimal()+ggtitle("ACF of Squared Residuals")
+g222<-ggPacf(as.vector(r_ets), lag.max = 104)+theme_minimal()+ggtitle("PACF of Squared Residuals") 
+grid.arrange(g111,g222,ncol=2)
+```
+
+Only in PACF plot one lag shows significance, but this is not serious problem for autocorrelation but to be sure we conduct Breusch-Godfrey test 
+
+```{r}
+m1 = lm(r_ets ~ 1+zlag(r_ets))
+bgtest(m1,order=30)
+
+```
+Since our p-val(0.752) >= 0.05 we fail to reject the null. This suggests no significant autocorrelation in the residuals.
+
+
+Heteroscedasticity
+```{r}
+rsquared_ets =r_ets^2
+g33<-ggAcf(as.vector(rsquared_ets), lag.max = 104)+theme_minimal()+ggtitle("ACF of Squared Residuals")
+g44<-ggPacf(as.vector(rsquared_ets), lag.max = 104)+theme_minimal()+ggtitle("PACF of Squared Residuals") 
+grid.arrange(g33,g44,ncol=2)
+```
+
+We don't have any heteroscedasticity problem
+
+# Obtaining forecast values of exponential smoothing method
+
+
+```{r}
+forecast_ets <- forecast(ets_t, h = 4)  
+
+
+autoplot(forecast_ets,main=c("Time Series Plot of Actual Values and ETS Forecast"), series="forecast" ) + autolayer(apricot_test,series = "actual")
+
+```
+```{r}
+accuracy(forecast_ets,apricot_test)
+
+```
+ETS model performs better than our ARIMA model in terms of being smaller value for nearly every criteria except ACF1 value but there exists slight difference.
+
+
+
+```{r}
+checkresiduals(forecast_ets)
+```
+its seems normally distributed, and there is no significant spike out of the borders.
+
+
+**Neural Network**
+
+```{r}
+# Fit the nnetar model
+nnetar_model <- nnetar(apricot_train_clean)
+nnetar_model
+
+autoplot(apricot_train)+autolayer(fitted(nnetar_model))+theme_minimal()+ggtitle("Fitted Values of NN Model")
+```
+The model is NNAR(1,1) model we have 1 lagged input variable and 1 neuron in the hidden layer
+
+Checking the assumptions
+```{r}
+checkresiduals(resid(nnetar_model))
+```
+
+Residuals seem normally distributed, and there is no exact pattern in time series. However in ACF plot one of the lags exceeds the WN border, this is not serious problem but It would be much better for checking the heteroscedasticity among residuals and autocorrelation assumption.
+
+Autocorrelation
+
+Breusch-Godfrey test 
+
+```{r}
+r_nnetar <- resid(nnetar_model)
+m2 = lm(r_nnetar ~ 1+zlag(r_nnetar))   
+bgtest(m2,order=30)
+
+```
+no serial correlation
+
+Heteroscedasticity
+
+studentized Breusch-Pagan test
+
+```{r}
+rsquared_nnetar <- resid(nnetar_model)^2
+m3 = lm(r_nnetar ~ apricot_train_clean+zlag(apricot_train_clean)+zlag(apricot_train_clean,2))
+bptest(m3)
+```
+Reject the null, There is no heteroscedasticity problem.
+
+
+
+```{r}
+# Forecast using nnetar
+forecast_nnetar <- forecast(nnetar_model, h = 4)
+
+# Plot the forecast
+autoplot(forecast_nnetar)+autolayer(apricot_test,series="actual",color="red")+theme_minimal()
+```
+**Accuracy Test for NNAR(1,1)**
+
+```{r}
+accuracy(forecast_nnetar,apricot_test)
+```
+NNAR does not shows better performance from ETS and ARIMA model
+
+
+**TBATS MODEL**
+
+
+```{r}
+# Fit the TBATS model
+tbats_model <- tbats(apricot_train_clean)
+tbats_model
+
+autoplot(apricot_train_clean,main="TS plot of Train with TBATS Fitted") +autolayer(fitted(tbats_model), series="Fitted") +theme_minimal()
+
+```
+
+
+```{r}
+checkresiduals(tbats_model)
+
+```
+
+There seems any problem in assumptions check
+
+
+
+```{r}
+# Forecast using TBATS
+forecast_tbats <- forecast(tbats_model, h =4) 
+
+# Plot the forecast
+autoplot(forecast_tbats)+autolayer(apricot_test,series="actual",color="red")+theme_minimal()
+
+```
+
+
+**TBATS ACCURACY**
+```{r}
+accuracy(forecast_tbats,apricot_test)
+```
+**Prophet Model**
+
+```{r,echo=FALSE}
+library(prophet)
+```
+
+```{r}
+# Convert data to Prophet format
+prophet_data <- data.frame(ds = seq(as.Date("1961-01-01"), by = "year", length.out = length(apricot_train_clean)),
+                           y = as.numeric(apricot_train_clean))
+
+# Fit the Prophet model
+prophet_model <- prophet(prophet_data)
+
+```
+
+
+```{r}
+#We can ignore the warning as Prophet will still run, since weekly or daily seasonality is irrelevant 
+
+# Make a future dataframe for 10 periods
+future <- make_future_dataframe(prophet_model, periods = 4, freq = "year")
+
+tail(future)
+```
+
+
+```{r}
+# Forecast using Prophet
+forecast_prophet <- predict(prophet_model, future)
+
+tail(forecast_prophet[c('ds', 'yhat', 'yhat_lower', 'yhat_upper')],5)
+```
+
+```{r}
+
+# Plot the forecast
+plot(prophet_model, forecast_prophet)
+
+# Plot components (trend, seasonality, etc.)
+prophet_plot_components(prophet_model, forecast_prophet)
+```
+
+
+**Accuracy of Probhet**
+
+```{r}
+accuracy(tail(forecast_prophet$yhat,4),apricot_test)
+```
+**Hyperparameter Tuning in Prophet**
+
+```{r}
+prophet_model_new <- prophet(prophet_data,changepoint.range=0.5,changepoint.prior.scale=0.2,seasonality.prior.scale=0.7)
+future_new=make_future_dataframe(prophet_model_new,periods = 4, freq = "year")
+forecast_prophet_new <- predict(prophet_model_new, future_new)
+
+```
+**Accuracy Prophet New **
+```{r}
+accuracy(tail(forecast_prophet_new$yhat,4),apricot_test)
+
+```
+
+Tuning the parameters 
+
+```{r}
+changepoint_prior <- c(0.1, 0.5, 0.9)
+seasonality_prior <- c(0.1, 0.3, 0.5)
+changepoint_range <- c(0.6, 0.8, 0.9)
+
+results <- data.frame(
+  changepoint_prior = numeric(),
+  seasonality_prior = numeric(),
+  changepoint_range = numeric(),
+  RMSE = numeric()
+)
+
+for (cp in changepoint_prior) {
+  for (sp in seasonality_prior) {
+    for (cr in changepoint_range) {
+      m <- prophet(
+        changepoint.prior.scale = cp,
+        seasonality.prior.scale = sp,
+        changepoint.range = cr
+      )
+      m <- fit.prophet(m, prophet_data) 
+      
+
+      future <- make_future_dataframe(m, periods = 4, freq = "year")
+      forecast <- predict(m, future)
+      
+      predicted <- tail(forecast$yhat, 4)
+      acc <- accuracy(predicted, apricot_test)  
+      rmse <- acc["Test set", "RMSE"]  # Extract RMSE from accuracy
+      
+      results <- rbind(results, data.frame(
+        changepoint_prior = cp, 
+        seasonality_prior = sp, 
+        changepoint_range = cr, 
+        RMSE = rmse
+      ))
+    }
+  }
+}
+
+
+#best parameters
+best_params <- results[which.min(results$RMSE), ]
+best_params
+
+
+```
+We can conclude that;
+The smallest RMSE value was obtained when the parameters: * changepoint.prior.scale=0.5 * seasonality.prior.scale=0.5 * changepoint.range=0.6
+
+
+```{r}
+prophet_model_new2 <- prophet(prophet_data,changepoint.range=0.6,changepoint.prior.scale=0.9,seasonality.prior.scale=0.5)
+future_new2=make_future_dataframe(prophet_model_new2,periods = 10, freq = "year")
+forecast_prophet_new2 <- predict(prophet_model_new2, future_new2)
+
+```
+
+```{r}
+accuracy(tail(forecast_prophet_new2$yhat,10),apricot_test)
+```
+
+
+
+
+```{r}
+autoplot(forecast_ets)+
+  autolayer(forecast_tbats$mean,color ="red" )+
+  autolayer(forecast_nnetar$mean, series = "NNETAR", color = "yellow")+
+  autolayer(apricot_test, series = "Test Set", color = "black")+
+  ggtitle("Forecasts and Predictions for Models") +
+  xlab("Time") +
+  ylab("Values")+
+  theme_minimal()
+  
+  
+
+```
+
+
+Since our data has increasing trend, and TBATS is above all of them therefore, TBATS forecast is the best 
+
+
+
+
+
+
+
+
+
+
+
+
+
